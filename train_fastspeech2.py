@@ -5,6 +5,7 @@ from torch.utils.data import DataLoader
 from dataloader_test import PatchedFastSpeech2Dataset, collate_fn
 from fastspeech2 import FastSpeech2  # Your model file
 import os
+from torch.cuda.amp import autocast, GradScaler
 
 # ================== CONFIG ==================
 metadata_path = r"C:\Users\Makam Sowmya\Downloads\tts_project_1\emovdb\metadata_with_bert.csv"
@@ -23,6 +24,7 @@ lambda_mel_mse = 1.0
 lambda_dur = 0.1
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+amp_enabled = (device.type == 'cuda')
 
 # ================== DATA ==================
 dataset = PatchedFastSpeech2Dataset(metadata_path, phoneme2id_path)
@@ -43,8 +45,11 @@ model = FastSpeech2(
 
 # ================== TRAINING SETUP ==================
 optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+scaler = GradScaler(enabled=amp_enabled)
 # LR scheduler
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=3, factor=0.5)
+
+best_avg_loss = float('inf')
 
 # ================== TRAINING LOOP ==================
 model.train()
@@ -62,39 +67,43 @@ for epoch in range(1, num_epochs + 1):
         if step == 1:
             print(f"First batch shapes - phonemes {phoneme_ids.shape}, mel {mels.shape}, durations {durations.shape}")
 
-        # Forward pass with GT durations + target mel_lengths
-        mel_outputs, _, predicted_log_durations = model(
-            phoneme_ids, speaker_ids, bert_embeddings,
-            durations=durations, mel_lengths=mel_lengths
-        )
+        optimizer.zero_grad(set_to_none=True)
+        with autocast(enabled=amp_enabled):
+            # Forward pass with GT durations + target mel_lengths
+            mel_outputs, _, predicted_log_durations = model(
+                phoneme_ids, speaker_ids, bert_embeddings,
+                durations=durations, mel_lengths=mel_lengths
+            )
 
-        mel_outputs = mel_outputs.transpose(1, 2)  # (B, 80, T)
+            mel_outputs = mel_outputs.transpose(1, 2)  # (B, 80, T)
 
-        # Masked mel loss (MSE + L1)
-        max_len = mel_outputs.size(2)
-        mask = (torch.arange(max_len, device=device).unsqueeze(0) < mel_lengths.unsqueeze(1))
-        mask = mask.unsqueeze(1).expand(-1, mel_dim, -1)  # (B, 80, T)
+            # Masked mel loss (MSE + L1)
+            max_len = mel_outputs.size(2)
+            mask = (torch.arange(max_len, device=device).unsqueeze(0) < mel_lengths.unsqueeze(1))
+            mask = mask.unsqueeze(1).expand(-1, mel_dim, -1)  # (B, 80, T)
 
-        l1 = (mel_outputs - mels).abs()
-        mse = (mel_outputs - mels) ** 2
-        mel_l1 = l1.masked_select(mask).mean()
-        mel_mse = mse.masked_select(mask).mean()
+            l1 = (mel_outputs - mels).abs()
+            mse = (mel_outputs - mels) ** 2
+            mel_l1 = l1.masked_select(mask).mean()
+            mel_mse = mse.masked_select(mask).mean()
 
-        # Duration prediction loss: supervise on log(dur+1) to stabilize
-        # Build padding mask for phoneme positions (0 are pad IDs)
-        phoneme_pad_mask = (phoneme_ids != 0).float()  # (B, T_phoneme)
-        target_log_dur = torch.log(durations.float() + 1.0)
-        dur_diff = (predicted_log_durations - target_log_dur) ** 2
-        dur_loss = (dur_diff * phoneme_pad_mask).sum() / (phoneme_pad_mask.sum() + 1e-6)
+            # Duration prediction loss: supervise on log(dur+1) to stabilize
+            # Build padding mask for phoneme positions (0 are pad IDs)
+            phoneme_pad_mask = (phoneme_ids != 0).float()  # (B, T_phoneme)
+            target_log_dur = torch.log(durations.float() + 1.0)
+            dur_diff = (predicted_log_durations - target_log_dur) ** 2
+            dur_loss = (dur_diff * phoneme_pad_mask).sum() / (phoneme_pad_mask.sum() + 1e-6)
 
-        loss = lambda_mel_l1 * mel_l1 + lambda_mel_mse * mel_mse + lambda_dur * dur_loss
+            loss = lambda_mel_l1 * mel_l1 + lambda_mel_mse * mel_mse + lambda_dur * dur_loss
 
-        optimizer.zero_grad()
-        loss.backward()
+        # Backward with scaled gradients, clip after unscale
+        scaler.scale(loss).backward()
+        scaler.unscale_(optimizer)
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-        optimizer.step()
+        scaler.step(optimizer)
+        scaler.update()
 
-        epoch_loss += loss.item()
+        epoch_loss += float(loss.detach().cpu())
 
         if step % 50 == 0:
             print(f"Epoch {epoch} Step {step}: mel_l1={mel_l1.item():.4f} mel_mse={mel_mse.item():.4f} dur={dur_loss.item():.4f} total={loss.item():.4f}")
@@ -102,6 +111,25 @@ for epoch in range(1, num_epochs + 1):
     avg_loss = epoch_loss / len(dataloader)
     print(f"[Epoch {epoch}/{num_epochs}] Loss: {avg_loss:.4f}")
     scheduler.step(avg_loss)
+
+    # Save best checkpoint
+    if avg_loss < best_avg_loss:
+        best_avg_loss = avg_loss
+        ckpt_path = f"fastspeech2_best.pt"
+        torch.save({
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'scaler_state_dict': scaler.state_dict(),
+            'epoch': epoch,
+            'avg_loss': avg_loss,
+            'config': {
+                'phoneme_embedding_dim': phoneme_embedding_dim,
+                'speaker_embedding_dim': speaker_embedding_dim,
+                'bert_embedding_dim': bert_embedding_dim,
+                'mel_dim': mel_dim,
+            },
+        }, ckpt_path)
+        print(f"Best checkpoint saved: {ckpt_path} (loss={avg_loss:.4f})")
 
     if epoch % 5 == 0:
         ckpt_path = f"fastspeech2_epoch{epoch}.pt"
