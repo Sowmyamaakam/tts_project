@@ -18,6 +18,10 @@ phoneme_embedding_dim = 256
 speaker_embedding_dim = 128
 bert_embedding_dim = 768
 
+lambda_mel_l1 = 1.0
+lambda_mel_mse = 1.0
+lambda_dur = 0.1
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # ================== DATA ==================
@@ -38,10 +42,8 @@ model = FastSpeech2(
 ).to(device)
 
 # ================== TRAINING SETUP ==================
-criterion = nn.MSELoss()
 optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-
-# Add learning rate scheduler
+# LR scheduler
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=3, factor=0.5)
 
 # ================== TRAINING LOOP ==================
@@ -55,33 +57,47 @@ for epoch in range(1, num_epochs + 1):
         speaker_ids = batch['speaker_id'].to(device)
         mels = batch['mel'].to(device)  # (B, 80, T)
         bert_embeddings = batch['bert_embedding'].to(device)
-        durations = batch['durations'].to(device)  # GT durations from aligner
+        durations = batch['durations'].to(device)  # GT durations from aligner or heuristic
         mel_lengths = batch['mel_lengths'].to(device)  # frame lengths
         if step == 1:
             print(f"First batch shapes - phonemes {phoneme_ids.shape}, mel {mels.shape}, durations {durations.shape}")
 
         # Forward pass with GT durations + target mel_lengths
-        mel_outputs, _ = model(
+        mel_outputs, _, predicted_log_durations = model(
             phoneme_ids, speaker_ids, bert_embeddings,
             durations=durations, mel_lengths=mel_lengths
         )
 
         mel_outputs = mel_outputs.transpose(1, 2)  # (B, 80, T)
 
-        # Masked loss to ignore padded frames
+        # Masked mel loss (MSE + L1)
         max_len = mel_outputs.size(2)
-        mask = torch.arange(max_len, device=device).unsqueeze(0) < mel_lengths.unsqueeze(1)
+        mask = (torch.arange(max_len, device=device).unsqueeze(0) < mel_lengths.unsqueeze(1))
         mask = mask.unsqueeze(1).expand(-1, mel_dim, -1)  # (B, 80, T)
 
-        diff = (mel_outputs - mels) ** 2
-        masked_loss = diff.masked_select(mask).mean()
+        l1 = (mel_outputs - mels).abs()
+        mse = (mel_outputs - mels) ** 2
+        mel_l1 = l1.masked_select(mask).mean()
+        mel_mse = mse.masked_select(mask).mean()
+
+        # Duration prediction loss: supervise on log(dur+1) to stabilize
+        # Build padding mask for phoneme positions (0 are pad IDs)
+        phoneme_pad_mask = (phoneme_ids != 0).float()  # (B, T_phoneme)
+        target_log_dur = torch.log(durations.float() + 1.0)
+        dur_diff = (predicted_log_durations - target_log_dur) ** 2
+        dur_loss = (dur_diff * phoneme_pad_mask).sum() / (phoneme_pad_mask.sum() + 1e-6)
+
+        loss = lambda_mel_l1 * mel_l1 + lambda_mel_mse * mel_mse + lambda_dur * dur_loss
 
         optimizer.zero_grad()
-        masked_loss.backward()
+        loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
 
-        epoch_loss += masked_loss.item()
+        epoch_loss += loss.item()
+
+        if step % 50 == 0:
+            print(f"Epoch {epoch} Step {step}: mel_l1={mel_l1.item():.4f} mel_mse={mel_mse.item():.4f} dur={dur_loss.item():.4f} total={loss.item():.4f}")
 
     avg_loss = epoch_loss / len(dataloader)
     print(f"[Epoch {epoch}/{num_epochs}] Loss: {avg_loss:.4f}")
