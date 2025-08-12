@@ -13,6 +13,7 @@ class PatchedFastSpeech2Dataset(FastSpeech2Dataset):
         with open(phoneme2id_path, 'r') as f:
             self.phoneme2id = json.load(f)
 
+        self.base_dir = os.path.dirname(metadata_path)
         self.mel_mean = mel_mean
         self.mel_std = mel_std
 
@@ -25,38 +26,70 @@ class PatchedFastSpeech2Dataset(FastSpeech2Dataset):
 
         mel_path = row['mel_path']
         if not os.path.isabs(mel_path):
-            mel_path = os.path.join('emovdb', mel_path)
+            mel_path = os.path.join(self.base_dir, mel_path)
         mel = np.load(mel_path)
         if self.mel_mean is not None and self.mel_std is not None:
             mel = (mel - self.mel_mean[:, None]) / self.mel_std[:, None]
+        mel_length = int(mel.shape[1])  # (n_mels, T) -> T
         mel = torch.FloatTensor(mel)
 
         bert_embedding = np.fromstring(row['bert_embedding'], sep=',', dtype=np.float32)
         bert_embedding = torch.FloatTensor(bert_embedding)
+
+        # Prefer durations from CSV if provided; otherwise compute heuristic
+        durations = None
+        if 'durations' in self.data.columns and isinstance(row['durations'], str) and len(row['durations']) > 0:
+            try:
+                parsed = [int(x) for x in str(row['durations']).split(',') if x.strip() != '']
+                durations = torch.LongTensor(parsed)
+            except Exception:
+                durations = None
+        if durations is None or durations.numel() != phoneme_ids.numel():
+            num_phonemes = int(phoneme_ids.size(0))
+            if num_phonemes > 0:
+                base = mel_length // num_phonemes
+                remainder = mel_length % num_phonemes
+                durations_list = [base + (1 if i < remainder else 0) for i in range(num_phonemes)]
+            else:
+                durations_list = []
+            durations = torch.LongTensor(durations_list)  # (T_phonemes,)
 
         return {
             'phoneme_ids': phoneme_ids,
             'speaker_id': speaker_id,
             'emotion_id': emotion_id,
             'mel': mel,
-            'bert_embedding': bert_embedding
+            'bert_embedding': bert_embedding,
+            'durations': durations,
+            'mel_length': torch.LongTensor([mel_length])  # keep as tensor for easy collation
         }
 
 
 def collate_fn(batch):
     phoneme_ids = [item['phoneme_ids'] for item in batch]
     phoneme_ids_padded = pad_sequence(phoneme_ids, batch_first=True, padding_value=0)
+
+    # Durations padded to phoneme length
+    durations = [item['durations'] for item in batch]
+    durations_padded = pad_sequence(durations, batch_first=True, padding_value=0)
+
     mels = [item['mel'].transpose(0, 1) for item in batch]  # (n_mels, T) -> (T, n_mels)
     mels_padded = pad_sequence(mels, batch_first=True, padding_value=0).transpose(1, 2)  # (B, n_mels, T)
+
     speaker_ids = torch.cat([item['speaker_id'] for item in batch])
     emotion_ids = torch.cat([item['emotion_id'] for item in batch])
     bert_embeddings = torch.stack([item['bert_embedding'] for item in batch])
+
+    mel_lengths = torch.cat([item['mel_length'] for item in batch]).long()  # (B,)
+
     return {
         'phoneme_ids': phoneme_ids_padded,
         'speaker_id': speaker_ids,
         'emotion_id': emotion_ids,
         'mel': mels_padded,
-        'bert_embedding': bert_embeddings
+        'bert_embedding': bert_embeddings,
+        'durations': durations_padded,
+        'mel_lengths': mel_lengths
     }
 
 # Test
@@ -76,4 +109,6 @@ for batch in dataloader:
     print("Emotion IDs shape:", batch['emotion_id'].shape)
     print("Mel shape:", batch['mel'].shape)
     print("BERT Embedding shape:", batch['bert_embedding'].shape)
+    print("Durations shape:", batch['durations'].shape)
+    print("Mel lengths shape:", batch['mel_lengths'].shape)
     break
