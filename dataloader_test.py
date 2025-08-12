@@ -93,22 +93,23 @@ def collate_fn(batch):
     }
 
 # Test
-metadata_path = r"C:\Users\Makam Sowmya\Downloads\tts_project_1\emovdb\metadata_with_bert.csv"
-phoneme2id_path = r"C:\Users\Makam Sowmya\Downloads\tts_project_1\emovdb\phoneme2id.json"
+if __name__ == '__main__':
+    metadata_path = r"C:\Users\Makam Sowmya\Downloads\tts_project_1\emovdb\metadata_with_bert.csv"
+    phoneme2id_path = r"C:\Users\Makam Sowmya\Downloads\tts_project_1\emovdb\phoneme2id.json"
 
-# Load mean/std if available (example from saved .npy)
-mel_mean = np.load("emovdb/mel_mean.npy") if os.path.exists("emovdb/mel_mean.npy") else None
-mel_std = np.load("emovdb/mel_std.npy") if os.path.exists("emovdb/mel_std.npy") else None
+    # Load mean/std if available (example from saved .npy)
+    mel_mean = np.load("emovdb/mel_mean.npy") if os.path.exists("emovdb/mel_mean.npy") else None
+    mel_std = np.load("emovdb/mel_std.npy") if os.path.exists("emovdb/mel_std.npy") else None
 
-dataset = PatchedFastSpeech2Dataset(metadata_path, phoneme2id_path, mel_mean, mel_std)
-dataloader = DataLoader(dataset, batch_size=8, shuffle=True, collate_fn=collate_fn)
+    dataset = PatchedFastSpeech2Dataset(metadata_path, phoneme2id_path, mel_mean, mel_std)
+    dataloader = DataLoader(dataset, batch_size=8, shuffle=True, collate_fn=collate_fn)
 
-for batch in dataloader:
-    print("Phoneme IDs shape:", batch['phoneme_ids'].shape)
-    print("Speaker IDs shape:", batch['speaker_id'].shape)
-    print("Emotion IDs shape:", batch['emotion_id'].shape)
-    print("Mel shape:", batch['mel'].shape)
-    print("BERT Embedding shape:", batch['bert_embedding'].shape)
-    print("Durations shape:", batch['durations'].shape)
-    print("Mel lengths shape:", batch['mel_lengths'].shape)
-    break
+    for batch in dataloader:
+        print("Phoneme IDs shape:", batch['phoneme_ids'].shape)
+        print("Speaker IDs shape:", batch['speaker_id'].shape)
+        print("Emotion IDs shape:", batch['emotion_id'].shape)
+        print("Mel shape:", batch['mel'].shape)
+        print("BERT Embedding shape:", batch['bert_embedding'].shape)
+        print("Durations shape:", batch['durations'].shape)
+        print("Mel lengths shape:", batch['mel_lengths'].shape)
+        break

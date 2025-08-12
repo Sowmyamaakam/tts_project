@@ -48,14 +48,17 @@ scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patienc
 model.train()
 for epoch in range(1, num_epochs + 1):
     epoch_loss = 0.0
+    print(f"Starting epoch {epoch}/{num_epochs}...")
 
-    for batch in dataloader:
+    for step, batch in enumerate(dataloader, start=1):
         phoneme_ids = batch['phoneme_ids'].to(device)
         speaker_ids = batch['speaker_id'].to(device)
         mels = batch['mel'].to(device)  # (B, 80, T)
         bert_embeddings = batch['bert_embedding'].to(device)
         durations = batch['durations'].to(device)  # GT durations from aligner
         mel_lengths = batch['mel_lengths'].to(device)  # frame lengths
+        if step == 1:
+            print(f"First batch shapes - phonemes {phoneme_ids.shape}, mel {mels.shape}, durations {durations.shape}")
 
         # Forward pass with GT durations + target mel_lengths
         mel_outputs, _ = model(
