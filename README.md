@@ -1,6 +1,6 @@
 # 🎙️ Text-to-Speech System (FastSpeech2)
 
-## 📌 Overview
+## Overview
 
 This project implements a **Text-to-Speech (TTS) system** based on the **FastSpeech2 architecture**, designed to generate natural-sounding speech from text input.
 
@@ -13,14 +13,14 @@ It includes support for:
 
 ---
 
-## 🚀 Features
+##  Features
 
-* 🔊 High-quality speech synthesis using FastSpeech2
-* 👥 Multi-speaker support
-* 😊 Emotion-aware speech generation
-* ⏱️ Duration predictor for accurate timing
-* 🧠 Optional BERT integration for improved text understanding
-* ⚡ Faster inference compared to autoregressive models
+* High-quality speech synthesis using FastSpeech2
+*  Multi-speaker support
+*  Emotion-aware speech generation
+*  Duration predictor for accurate timing
+*  Optional BERT integration for improved text understanding
+*  Faster inference compared to autoregressive models
 
 ---
 
@@ -87,13 +87,13 @@ python preprocess.py
 
 ## 🧪 Usage
 
-### ▶️ Train the model
+###  Train the model
 
 ```bash
 python train.py
 ```
 
-### 🔊 Generate speech
+###  Generate speech
 
 ```bash
 python inference.py --text "Hello, how are you?"
@@ -101,7 +101,7 @@ python inference.py --text "Hello, how are you?"
 
 ---
 
-## 🧠 Model Architecture
+##  Model Architecture
 
 FastSpeech2 consists of:
 
@@ -113,25 +113,25 @@ FastSpeech2 consists of:
 
 ---
 
-## 🔍 Key Components
+##  Key Components
 
-### 📌 Positional Encoding
+###  Positional Encoding
 
 Adds positional information to input sequences.
 
-### 📌 Duration Predictor
+###  Duration Predictor
 
 Predicts how long each phoneme should be spoken.
 
-### 📌 Length Regulator
+###  Length Regulator
 
 Expands encoded sequence based on predicted durations.
 
-### 📌 Speaker Embedding
+###  Speaker Embedding
 
 Allows multi-speaker voice synthesis.
 
-### 📌 BERT Integration
+###  BERT Integration
 
 Improves contextual understanding of text input.
 
@@ -145,7 +145,7 @@ Improves contextual understanding of text input.
 
 ---
 
-## ⚠️ Implementation Notes
+##  Implementation Notes
 
 * Ensure proper audio preprocessing
 * Use GPU for faster training
@@ -154,7 +154,7 @@ Improves contextual understanding of text input.
 
 ---
 
-## 🎯 Future Improvements
+##  Future Improvements
 
 * Add real-time speech generation
 * Improve emotion modeling
@@ -163,7 +163,7 @@ Improves contextual understanding of text input.
 
 ---
 
-## 📫 Contact
+##  Contact
 
 * GitHub: https://github.com/Sowmyamaakam
 
