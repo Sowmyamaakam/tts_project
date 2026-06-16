@@ -131,15 +131,17 @@ class FastSpeech2(nn.Module):
         x = self.positional_encoding(x)
         x = self.encoder(x)
 
+        # Always compute predicted log-durations for possible supervision
+        predicted_log_durations = self.duration_predictor(x)  # (B, T_phoneme)
+
         if durations is None:
             # Inference: use predicted durations
-            log_durations = self.duration_predictor(x)
-            durations = torch.clamp(torch.round(torch.exp(log_durations) - 1), min=1).long()
+            durations = torch.clamp(torch.round(torch.exp(predicted_log_durations) - 1), min=1).long()
 
         # Pass target mel_lengths during training to clip/pad properly
         x = self.length_regulator(x, durations, target_len=mel_lengths)
         mel_output = self.decoder(x)  # (B, T_mel, mel_dim)
 
-        return mel_output, durations
+        return mel_output, durations, predicted_log_durations
 
 
